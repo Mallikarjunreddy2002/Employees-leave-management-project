@@ -9,7 +9,7 @@ Employee    YES            Manager         Own leave history
 Manager     YES (own)      Admin           ONLY employee
                                            leaves (dept)
                                            NO apply form here
-Admin       NO             —               ONLY manager
+Admin       NO             —               manager and employee
                                            leaves
                                            NO apply form here
 ─────────────────────────────────────────────────────────────
@@ -18,7 +18,7 @@ KEY RULES:
   2. Manager CANNOT approve their own or other manager leaves
   3. Manager sees ONLY employee leaves on their dashboard
   4. Manager apply form is on a SEPARATE page (not dashboard)
-  5. Admin sees ONLY manager leaves on admin dashboard
+  5. Admin sees manager and employee leaves on admin dashboard
   6. Admin has NO apply-leave form anywhere
   7. Employee leave form NEVER appears on manager/admin pages
 =============================================================
@@ -70,11 +70,6 @@ def dashboard(request):
 
 
 # ═══════════════════════════════════════════════════════════
-# ███████╗███╗   ███╗██████╗ ██╗      ██████╗ ██╗   ██╗███████╗███████╗
-# ██╔════╝████╗ ████║██╔══██╗██║     ██╔═══██╗╚██╗ ██╔╝██╔════╝██╔════╝
-# █████╗  ██╔████╔██║██████╔╝██║     ██║   ██║ ╚████╔╝ █████╗  █████╗
-# ██╔══╝  ██║╚██╔╝██║██╔═══╝ ██║     ██║   ██║  ╚██╔╝  ██╔══╝  ██╔══╝
-# ███████╗██║ ╚═╝ ██║██║     ███████╗╚██████╔╝   ██║   ███████╗███████╗
 # EMPLOYEE SECTION
 # ═══════════════════════════════════════════════════════════
 
@@ -183,9 +178,6 @@ def employee_cancel(request, leave_id):
 
 
 # ═══════════════════════════════════════════════════════════
-# ███╗   ███╗ █████╗ ███╗   ██╗ █████╗  ██████╗ ███████╗██████╗
-# ████╗ ████║██╔══██╗████╗  ██║██╔══██╗██╔════╝ ██╔════╝██╔══██╗
-# ██╔████╔██║███████║██╔██╗ ██║███████║██║  ███╗█████╗  ██████╔╝
 # MANAGER SECTION
 # ═══════════════════════════════════════════════════════════
 
@@ -387,33 +379,29 @@ def manager_cancel(request, leave_id):
 
 
 # ═══════════════════════════════════════════════════════════
-# ██████╗  ██████╗ ██╗
-# ██╔══██╗██╔═══██╗██║
-# ███████╔╝██║   ██║██║
 # ADMIN SECTION
 # ═══════════════════════════════════════════════════════════
 
 @role_required('admin')
 def admin_dashboard(request):
     """
-    Shows:  ONLY manager leave applications
+    Shows:  manager and employee leave applications
     No:     Employee leaves, apply-leave form, leave balance
     Admin CANNOT apply for leave through this system.
     """
-    mgr_leaves = LeaveApplication.objects.filter(
-        applicant__role='manager'
-    ).select_related('applicant')
+    all_leaves = LeaveApplication.objects.all().select_related('applicant')
+
 
     # All managers list for sidebar info
     managers = User.objects.filter(role='manager').order_by('department', 'username')
 
     context = {
-        'recent_leaves':  mgr_leaves[:8],
-        'pending_count':  mgr_leaves.filter(status='pending').count(),
-        'approved_count': mgr_leaves.filter(status='approved').count(),
-        'rejected_count': mgr_leaves.filter(status='rejected').count(),
-        'total_count':    mgr_leaves.count(),
-        'pending_list':   mgr_leaves.filter(status='pending')[:5],
+        'recent_leaves':  all_leaves[:8],
+        'pending_count':  all_leaves.filter(status='pending').count(),
+        'approved_count': all_leaves.filter(status='approved').count(),
+        'rejected_count': all_leaves.filter(status='rejected').count(),
+        'total_count':    all_leaves.count(),
+        'pending_list':   all_leaves.filter(status='pending')[:5],
         'managers':       managers,
     }
     return render(request, 'admin/dashboard.html', context)
@@ -422,34 +410,30 @@ def admin_dashboard(request):
 @role_required('admin')
 def admin_pending(request):
     """
-    Admin sees ALL pending manager leaves.
-    Admin CANNOT see or approve employee leaves here.
+    Admin sees ALL pending leaves (manager + employee).
     """
     pending = LeaveApplication.objects.filter(
-        applicant__role='manager',
         status='pending'
     ).select_related('applicant').order_by('-applied_date')
 
     return render(request, 'admin/pending.html', {'pending_leaves': pending})
 
 
+
 @role_required('admin')
 def admin_review(request, leave_id):
     """
-    Admin approves/rejects manager leave ONLY.
-    BLOCKED if applicant is not a manager.
-    Manager/Employee CANNOT access this view.
+    Admin approves/rejects ANY pending leave.
     """
+
     leave = get_object_or_404(LeaveApplication, leave_id=leave_id)
 
-    # ── RULE: Only manager leaves ──────────────────────────────
-    if leave.applicant.role != 'manager':
-        messages.error(request, "Admin can only review manager leave applications.")
-        return redirect('admin_dashboard')
-
-    # ── RULE: Must be pending ──────────────────────────────────
+    # Must be pending
     if leave.status != 'pending':
-        messages.warning(request, f"LEAVE-{leave.leave_id} has already been {leave.status}.")
+        messages.warning(
+            request,
+            f"LEAVE-{leave.leave_id} has already been {leave.status}."
+        )
         return redirect('admin_pending')
 
     if request.method == 'POST':
@@ -459,26 +443,34 @@ def admin_review(request, leave_id):
             comment  = form.cleaned_data['comment']
 
             if decision == 'approve':
-                # Deduct manager's leave balance
                 lb, _ = LeaveBalance.objects.get_or_create(
-                    user=leave.applicant, year=datetime.now().year
+                    user=leave.applicant,
+                    year=datetime.now().year
                 )
+
                 if leave.leave_type == 'casual':
                     lb.casual_leave = max(0, lb.casual_leave - leave.total_days)
                 elif leave.leave_type == 'sick':
-                    lb.sick_leave   = max(0, lb.sick_leave - leave.total_days)
+                    lb.sick_leave = max(0, lb.sick_leave - leave.total_days)
                 elif leave.leave_type == 'earned':
                     lb.earned_leave = max(0, lb.earned_leave - leave.total_days)
+
                 lb.save()
                 leave.status = 'approved'
-                messages.success(request, f"LEAVE-{leave.leave_id} APPROVED for manager {leave.applicant.username}.")
+                messages.success(
+                    request,
+                    f"LEAVE-{leave.leave_id} APPROVED for {leave.applicant.username}."
+                )
             else:
                 leave.status = 'rejected'
-                messages.success(request, f"LEAVE-{leave.leave_id} REJECTED for manager {leave.applicant.username}.")
+                messages.success(
+                    request,
+                    f"LEAVE-{leave.leave_id} REJECTED for {leave.applicant.username}."
+                )
 
-            leave.reviewed_by    = request.user
+            leave.reviewed_by = request.user
             leave.review_comment = comment
-            leave.review_date    = datetime.now()
+            leave.review_date = datetime.now()
             leave.save()
 
             _send_email_notification(leave, request.user)
@@ -486,31 +478,34 @@ def admin_review(request, leave_id):
     else:
         form = ReviewForm()
 
-    return render(request, 'admin/review.html', {'leave': leave, 'form': form})
-
+    return render(request, 'admin/review.html', {
+        'leave': leave,
+        'form': form
+    })
 
 @role_required('admin')
 def admin_all_leaves(request):
-    """Admin views all manager leave applications with filters."""
-    leaves = LeaveApplication.objects.filter(
-        applicant__role='manager'
-    ).select_related('applicant')
+    """
+    Admin views ALL leave applications with filters.
+    """
+    leaves = LeaveApplication.objects.all().select_related('applicant')
 
     sf = request.GET.get('status', '')
     if sf:
         leaves = leaves.filter(status=sf)
 
-    return render(request, 'admin/all_leaves.html', {'leaves': leaves, 'status_filter': sf})
-
+    return render(request, 'admin/all_leaves.html', {
+        'leaves': leaves,
+        'status_filter': sf
+    })
 
 # ═══════════════════════════════════════════════════════════
 # SHARED: Leave detail (read-only, permission-checked)
 # ═══════════════════════════════════════════════════════════
-
 @login_required
 def leave_detail(request, leave_id):
     leave = get_object_or_404(LeaveApplication, leave_id=leave_id)
-    user  = request.user
+    user = request.user
 
     # Employee: only own leaves
     if user.role == 'employee' and leave.applicant != user:
@@ -523,13 +518,8 @@ def leave_detail(request, leave_id):
             messages.error(request, "You can only view employee leaves from your department.")
             return redirect('manager_dashboard')
 
-    # Admin: only manager leaves
-    if user.role == 'admin' and leave.applicant.role != 'manager':
-        messages.error(request, "Admin can only view manager leave applications.")
-        return redirect('admin_dashboard')
-
+    # Admin: can view ALL leave applications
     return render(request, 'shared/leave_detail.html', {'leave': leave})
-
 
 # ═══════════════════════════════════════════════════════════
 # HELPER: Email notification
