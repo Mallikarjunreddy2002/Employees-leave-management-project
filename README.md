@@ -26,9 +26,10 @@ It allows employees to apply for leave and managers to approve or reject request
 ### 🔐 Login Page
 [![Login](screenshots/login.png)](https://ibb.co/hRLY9q0H)
 
-
 ### 📊 Dashboard
-[![Dashboard](screenshots/dashboard.png)](https://ibb.co/27rZ2485)
+[![EMP Dashboard](screenshots/dashboard.png)](https://ibb.co/ycYhzY1s)
+[![MNG Dashboard](screenshots/dashboard.png)](https://ibb.co/27rZ2485)
+[![ADMIN Dashboard](screenshots/dashboard.png)](https://ibb.co/LX0QKHSk)
 
 ### 📝 Apply Leave Page
 [![Apply Leave](screenshots/apply-leave.png)](https://ibb.co/PGcKDLd5)
